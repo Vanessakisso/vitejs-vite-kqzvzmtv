@@ -6,6 +6,9 @@ import { useState, useEffect } from "react";
    Mobile-first · Production-grade · Zero dependencies beyond React
    ════════════════════════════════════════════════════════════════════ */
 
+// VERSION STAMP — verify which build is actually running
+const PO_VERSION = "v6.2-2026.05.07";
+
 const T = {
   bg: "#06080A", surface: "#0C1014", card: "#111518", border: "#1A2026",
   cyan: "#00C2FF", cyanDim: "#006B8C", cyanDeep: "#00111A", cyanGlow: "#66DCFF",
@@ -232,6 +235,34 @@ function daysSince(dateStr) {
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return 0;
   return Math.floor((Date.now() - d.getTime()) / 86400000);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   EMAIL SENDING — opens user's default email app via mailto:
+   Works on every device, every email client (Gmail, Outlook, Apple Mail, Ionos)
+   ────────────────────────────────────────────────────────────────── */
+
+function sendEmailViaMailto({ to = "", subject = "", body = "", from = "" }) {
+  // mailto: spec — encode subject + body, opens default email app
+  const params = [];
+  if (subject) params.push(`subject=${encodeURIComponent(subject)}`);
+  if (body) params.push(`body=${encodeURIComponent(body)}`);
+  const recipient = encodeURIComponent(to || "");
+  const qs = params.length ? `?${params.join("&")}` : "";
+  const mailtoUrl = `mailto:${recipient}${qs}`;
+
+  // Use window.location.href for maximum compatibility (works in iframes, PWAs, mobile)
+  try {
+    window.location.href = mailtoUrl;
+    return true;
+  } catch (_) {
+    try {
+      const link = document.createElement("a");
+      link.href = mailtoUrl;
+      link.click();
+      return true;
+    } catch (__) { return false; }
+  }
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -616,7 +647,8 @@ function MainApp({ owner }) {
         <div style={{ marginTop: "auto", padding: 12, fontSize: 10, color: T.gray, lineHeight: 1.6 }}>
           {owner.name}<br />Vanessa Kisso<br />
           <span style={{ color: T.cyanDim }}>27 verticals · 70 sources</span><br />
-          <span style={{ color: T.cyanDim }}>~3,000/day · 43 buyers</span>
+          <span style={{ color: T.cyanDim }}>~3,000/day · 43 buyers</span><br />
+          <span style={{ color: T.green, fontFamily: "'DM Mono', monospace", marginTop: 4, display: "inline-block" }}>BUILD {PO_VERSION}</span>
         </div>
       </aside>
 
@@ -672,8 +704,11 @@ function Dashboard({ deals, setTab }) {
   return (
     <div>
       <div className="h1" style={{ marginBottom: 4 }}>Command</div>
-      <div style={{ fontSize: 13, color: T.gl, marginBottom: 18 }}>
+      <div style={{ fontSize: 13, color: T.gl, marginBottom: 4 }}>
         {new Date().toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric" })}
+      </div>
+      <div className="mono" style={{ fontSize: 10, color: T.green, marginBottom: 18 }}>
+        70 sources · ~3,000/day · BUILD {PO_VERSION}
       </div>
 
       <div className="stat-grid">
@@ -964,10 +999,75 @@ Sign as ${owner.name}, Principal at PeakOffers, Ontario Canada.`,
     showToast(`${ok} email${ok !== 1 ? "s" : ""} drafted`);
   };
 
-  const approve = id => {
-    setQueue(q => q.map(x => x.id === id ? { ...x, status: "approved" } : x));
-    saveDeals(deals.map(d => d.id === id ? { ...d, stage: "Intro Sent", lastStageChange: today() } : d));
-    showToast("Approved + moved to Intro Sent");
+  const sendAndApprove = async q => {
+    const deal = deals.find(d => d.id === q.id);
+  
+    let recipient = deal?.sellerEmail || "";
+  
+    if (!recipient) {
+      recipient = window.prompt(
+        `Send "${q.subject}" to which email address?`,
+        ""
+      );
+  
+      if (!recipient) {
+        showToast("Cancelled");
+        return;
+      }
+  
+      saveDeals(
+        deals.map(d =>
+          d.id === q.id
+            ? { ...d, sellerEmail: recipient }
+            : d
+        )
+      );
+    }
+  
+    try {
+      const res = await fetch("/api/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          to: recipient,
+          subject: q.subject,
+          body: q.body,
+        }),
+      });
+  
+      const data = await res.json();
+  
+      if (!res.ok) {
+        throw new Error(data.error || "Failed");
+      }
+  
+      setQueue(qq =>
+        qq.map(x =>
+          x.id === q.id
+            ? { ...x, status: "approved" }
+            : x
+        )
+      );
+  
+      saveDeals(
+        deals.map(d =>
+          d.id === q.id
+            ? {
+                ...d,
+                stage: "Intro Sent",
+                lastStageChange: today(),
+                sellerEmail: recipient,
+              }
+            : d
+        )
+      );
+  
+      showToast("Email sent");
+    } catch (err) {
+      showToast(err.message || "Send failed");
+    }
   };
 
   const skip = id => setQueue(q => q.filter(x => x.id !== id));
@@ -1031,8 +1131,8 @@ Sign as ${owner.name}, Principal at PeakOffers, Ontario Canada.`,
           {q.error && <div style={{ color: T.red, fontSize: 11, marginBottom: 8 }}>{q.error}</div>}
 
           {q.status === "pending" && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
-              <button className="btn btn-sm" onClick={() => approve(q.id)}>✓ Approve</button>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 6 }}>
+              <button className="btn btn-sm" onClick={() => sendAndApprove(q)}>✉ Send Email</button>
               <button className="ghost btn-sm" onClick={() => copy(q)}>Copy</button>
               <button className="ghost btn-sm" onClick={() => skip(q.id)} style={{ color: T.red, borderColor: T.red + "55" }}>Skip</button>
             </div>
@@ -1144,6 +1244,7 @@ function Pipeline({ deals, saveDeals, showToast }) {
 
 function DealModal({ deal, onClose, moveStage, deleteDeal, updateDeal }) {
   const [notes, setNotes] = useState(deal.notes || "");
+  const [sellerEmail, setSellerEmail] = useState(deal.sellerEmail || "");
 
   return (
     <div className="modal-bg" onClick={onClose}>
@@ -1175,6 +1276,16 @@ function DealModal({ deal, onClose, moveStage, deleteDeal, updateDeal }) {
           </button>
           {deal.flagged && <span className="badge b-orange">⚠ Stuck 7+ days</span>}
         </div>
+
+        <div className="label" style={{ marginBottom: 6 }}>Seller Email (for outreach)</div>
+        <input
+          type="email"
+          value={sellerEmail}
+          onChange={e => setSellerEmail(e.target.value)}
+          onBlur={() => updateDeal({ sellerEmail })}
+          placeholder="seller@example.com"
+          style={{ marginBottom: 14 }}
+        />
 
         <div className="label" style={{ marginBottom: 8 }}>Move to Stage</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 6, marginBottom: 16 }}>
@@ -1291,8 +1402,17 @@ Subject: LOI Ready — ${deal.name}
             </div>
           )}
           <div className="card" style={{ fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap", marginBottom: 10 }}>{result}</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-            <button className="btn btn-sm" onClick={copyEmail}>Copy Email</button>
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 6 }}>
+            <button className="btn btn-sm" onClick={() => {
+              const recipient = deal?.sellerEmail || window.prompt(`Send to which email?`, "");
+              if (!recipient) return;
+              if (deal && !deal.sellerEmail) {
+                // Save it for next time (we don't have updateDeals here, just trigger mailto)
+              }
+              sendEmailViaMailto({ to: recipient, subject, body: result });
+              showToast("Email app opened — tap Send to deliver");
+            }}>✉ Send Email</button>
+            <button className="ghost btn-sm" onClick={copyEmail}>Copy</button>
             <button className="ghost btn-sm" onClick={generate}>Redo</button>
           </div>
         </>
@@ -1481,5 +1601,4 @@ Use professional legal language. Make it ready to execute.`,
     </div>
   );
 }
-
 
