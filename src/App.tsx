@@ -163,7 +163,7 @@ let circuit = { failures: 0, lastFail: 0 };
 function resetCircuit() { circuit = { failures: 0, lastFail: 0 }; }
 
 async function callAI(system, user, maxTokens = 800) {
-  const apiKey = window.__PO_API_KEY__ || "";
+  const apiKey = (window as any).__PO_API_KEY__|| "";
   if (!apiKey) throw new Error("No API key — go to Settings");
 
   const now = Date.now();
@@ -477,14 +477,14 @@ export default function App() {
   }));
 
   useEffect(() => {
-    window.__PO_API_KEY__ = safeLS.getStr("po_key");
+    (window as any).__PO_API_KEY__= safeLS.getStr("po_key");
   }, [launched]);
 
   const handleLaunch = ({ key, name, email }) => {
     safeLS.setStr("po_key", key);
     safeLS.setStr("po_name", name);
     safeLS.setStr("po_email", email);
-    window.__PO_API_KEY__ = key;
+    (window as any).__PO_API_KEY__ = key;
     setOwner({ name, email });
     setLaunched(true);
   };
